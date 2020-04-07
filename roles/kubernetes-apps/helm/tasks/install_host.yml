@@ -2,21 +2,43 @@
 - name: Helm | Set commands for helm host tasks
   set_fact:
     helm_compare_command: >-
-      {%- if container_manager in ['docker', 'crio'] %}
+      {%- if container_manager in ['docker'] %}
       {{ docker_bin_dir }}/docker run --rm -v {{ bin_dir }}:/systembindir --entrypoint /usr/bin/cmp {{ helm_image_repo }}:{{ helm_image_tag }} /usr/local/bin/helm /systembindir/helm
+      {%- elif container_manager == "crio" %}
+      {{ bin_dir }}/crictl start $(crictl create $(crictl runp /tmp/{{ compare_cri_pod_id }}-helm-pod.json) /tmp/{{ compare_cri_pod_id }}-helm-container.json /tmp/{{ compare_cri_pod_id }}-helm-pod.json)
       {%- elif container_manager == "containerd" %}
       ctr run --rm --mount type=bind,src={{ bin_dir }},dst=/systembindir,options=rbind:rw {{ helm_image_repo }}:{{ helm_image_tag }} helm-compare sh -c 'cmp /usr/local/bin/helm /systembindir/helm'
       {%- endif %}
     helm_copy_command: >-
       {%- if container_manager in ['docker', 'crio'] %}
       {{ docker_bin_dir }}/docker run --rm -v {{ bin_dir }}:/systembindir --entrypoint /bin/cp {{ helm_image_repo }}:{{ helm_image_tag }} -f /usr/local/bin/helm /systembindir/helm
+      {%- elif container_manager == "crio" %}
+      {{ bin_dir }}/crictl start $(crictl create $(crictl runp /tmp/{{ copy_cri_pod_id }}-helm-pod.json) /tmp/{{ copy_cri_pod_id }}-helm-container.json /tmp/{{ copy_cri_pod_id }}-helm-pod.json)
       {%- elif container_manager == "containerd" %}
       ctr run --rm --mount type=bind,src={{ bin_dir }},dst=/systembindir,options=rbind:rw {{ helm_image_repo }}:{{ helm_image_tag }} helm-copy sh -c '/bin/cp -f /usr/local/bin/helm /systembindir/helm'
       {%- endif %}
 
+#  crictl start $(crictl create $(crictl runp pod.json) container.json pod.json)
+- name: Helm | Temporal pod files
+  template:
+    src: "{{ item.file }}.j2"
+    dest: "/tmp/{{ item.pod }}-{{ item.file }}"
+  with_items:
+    - {file: helm-pod.json, pod: "{{ compare_cri_pod_id }}" }
+    - {file: helm-container.json, pod: "{{ compare_cri_pod_id }}", command: "'/usr/bin/cmp','/usr/local/bin/helm', '/systembindir/helm'" }    
+    - {file: helm-pod.json, pod: "{{ copy_cri_pod_id }}" }
+    - {file: helm-container.json, pod: "{{ copy_cri_pod_id }}", command: "'/bin/cp','-f', '/usr/local/bin/helm', '/systembindir/helm'" } 
+  when: container_manager == "crio"
+
 - name: Helm | ensure helm container is pulled for containerd
   command: "ctr i pull {{ helm_image_repo }}:{{ helm_image_tag }}"
   when: container_manager == "containerd"
+
+- name: Helm | ensure helm container is pulled for crio
+  command: >- 
+      {{ bin_dir }}/crictl pull {{ helm_image_repo }}:{{ helm_image_tag }} 
+      && {{ bin_dir }}/crictl create helm-sandbox /tmp/helm-container.json /tmp/helm-pod.json
+  when: container_manager == "crio"
 
 - name: Helm | Compare host helm with helm container
   command: "{{ helm_compare_command }}"
@@ -40,3 +62,7 @@
   args:
     creates: "{{ bin_dir }}/socat"
   when: ansible_os_family in ['CoreOS', 'Container Linux by CoreOS', 'Flatcar', 'Flatcar Container Linux by Kinvolk']
+
+- name: Helm | cleanup crio
+  command: rm -f /tmp/*helm-pod.json /tmp/*helm-container.json
+  when: container_manager == "crio"

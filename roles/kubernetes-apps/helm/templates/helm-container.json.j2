@@ -1,0 +1,26 @@
+{
+  "metadata": {
+      "name": "helm"
+  },
+  "image":{
+      "image": "{{ helm_image_repo }}:{{ helm_image_tag }}"
+  },
+  "command": [
+      {{ item.command }}
+  ],
+  "mounts": [
+    {
+      "container_path": "/systembindir",
+      "host_path": "{{ bin_dir }}",
+      "readonly": false
+    },
+    {
+      "container_path": "/tmp",
+      "host_path": "/tmp",
+      "readonly": false
+    }    
+  ],  
+  "linux": {
+  }
+}
+
